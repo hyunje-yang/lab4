@@ -215,7 +215,7 @@ window.addEventListener('load',function(){ setTimeout(function(){
 
   <button class="btn" data-go="pick">Start</button>
   <button class="btn ghost sm" id="btnDemo">Try it first with a demo video</button>
-  <p class="foot">Lab 4 pilot &middot; v1.014</p>
+  <p class="foot">Lab 4 pilot &middot; v1.015</p>
 </section>
 
 <!-- ============ 2. 개념 고르기 ============ -->
@@ -252,12 +252,12 @@ window.addEventListener('load',function(){ setTimeout(function(){
   <h2 id="shTtl">Record</h2>
   <div class="card tight">
     <div class="kv"><span class="k">Length</span><span class="v" id="shLen">Until all ducks leave the frame</span></div>
-    <div class="kv"><span class="k">Phone</span><span class="v">Mounted on a tripod</span></div>
+    <div class="kv"><span class="k">Phone</span><span class="v">On a tripod, pointing straight down</span></div>
     <div class="kv"><span class="k">Frame</span><span class="v">Both walls fully visible</span></div>
   </div>
   <h3>Before you record, check both</h3>
   <div class="card tight">
-    <label class="chk"><input type="checkbox" id="shMount"> The phone is on the tripod and does not move</label>
+    <label class="chk"><input type="checkbox" id="shMount"> The phone is on the tripod, <b>pointing straight down</b> at the water, and does not move</label>
     <label class="chk"><input type="checkbox" id="shFrame"> Both walls are on screen, and no ducks are in the water yet</label>
   </div>
   <p class="sub">Start recording first, then walk upstream behind the phone and put the ducks in.</p>
@@ -394,7 +394,7 @@ const CONCEPTS = {
          '<b>the direction of the line = the direction the water moves at that spot</b>.',
     how:'Imagine taking a single photo. Draw a short arrow on each duck in the direction it is moving. '+
         'Connect those arrows into smooth, unbroken lines, and you get streamlines. That is why the ducks must be in <b>many places at the same time</b>.',
-    kit:['10 yellow ducks','Phone on a tripod'],
+    kit:['10 yellow ducks','Phone on a tripod (looking straight down)'],
     steps:['Hold all 10 ducks in one hand and stand <b>upstream of the phone (behind it)</b>.',
            'Scatter them across the full channel width <b>all at once</b>.',
            'Start recording 2 seconds before you throw, and keep recording <b>until all ducks leave the frame</b>.'],
@@ -409,7 +409,7 @@ const CONCEPTS = {
          '<b>from start to finish</b>.',
     how:'Put just one duck in the water, mark each spot it passes, and connect the marks. That line is the pathline. '+
         'With many ducks it is hard to tell which is which, so use <b>only one</b>.',
-    kit:['1 pink duck','Phone on a tripod'],
+    kit:['1 pink duck','Phone on a tripod (looking straight down)'],
     steps:['Hold one pink duck and stand <b>upstream of the phone (behind it)</b>.',
            'Place <b>only one duck</b> in the water.',
            'Start recording 2 seconds before you release it, and keep recording <b>until the duck leaves the frame</b>.'],
@@ -423,7 +423,7 @@ const CONCEPTS = {
          'Think of chimney smoke. All the smoke came out of the same chimney, and the plume you see is where that smoke is now.',
     how:'If you keep dropping ducks at <b>one spot</b>, they line up in a single row. That row is the streakline. '+
         'Capture this row at <b>three different instants</b> (t₁, t₂, t₃) to get three lines. All three start at <b>the same point</b>.',
-    kit:['10 yellow ducks','Phone on a tripod'],
+    kit:['10 yellow ducks','Phone on a tripod (looking straight down)'],
     steps:['Hold the ducks and stand <b>upstream of the phone (behind it)</b>. Rest your forearm on the rail to keep your hand steady.',
            'Start recording. After 2 seconds, drop one duck every 2 seconds <b>at exactly the same spot</b>. Do not move your hand side to side.',
            'After all ducks are in, keep recording <b>until all ducks leave the frame</b>.'],
@@ -434,6 +434,9 @@ const ROWS = [
   {obs:false, name:'Without Obstruction', ko:'Without Obstruction'},
   {obs:true,  name:'With Obstruction',    ko:'With Obstruction'}
 ];
+/* 테이프 없이 길이를 추정하므로 수직에 가까울수록 정확하다 (모의: 90° ±1 cm, 75° ±4 cm, 45° ±24 cm, L=120 cm) */
+const MOUNT_STEP = 'Raise the tripod as high as it goes and point the phone <b>straight down</b> at the water, not at an angle. '+
+  'The more straight down it looks, the more accurate the speeds are. Both walls must be on screen.';
 const OBS_STEP = 'Set up the <b>V-notch plate</b> in the channel and aim the phone so the plate sits at the left edge of the screen. Record the ducks <b>downstream</b> of the plate.';
 const OBS_WATCH = ' Water that passes the V-notch becomes <b>turbulent</b>. Compare with the no-obstruction case and see how much the lines are disturbed.';
 /* V-notch 뒤 난류 카툰 조각. 판·거품 = analysis/lab4_obs_icons.ver.0.005.py (후보 D),
@@ -615,7 +618,7 @@ function fillBrief(){
   $('brFig').innerHTML = conceptSvg(S.concept, S.obs);
   $('brHow').innerHTML = c.how + (S.obs ? OBS_WATCH : '');
   $('brKit').innerHTML = (S.obs ? c.kit.concat(['V-notch plate']) : c.kit).map(x=>`<span>${x}</span>`).join('');
-  $('brSteps').innerHTML = (S.obs ? [OBS_STEP].concat(c.steps) : c.steps).map(x=>`<li>${x}</li>`).join('');
+  $('brSteps').innerHTML = [MOUNT_STEP].concat(S.obs ? [OBS_STEP].concat(c.steps) : c.steps).map(x=>`<li>${x}</li>`).join('');
   $('shTtl').textContent = 'Record ' + c.name + (S.obs ? ' (with obstruction)' : '');
 }
 
