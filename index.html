@@ -215,7 +215,7 @@ window.addEventListener('load',function(){ setTimeout(function(){
 
   <button class="btn" id="btnStart">Start</button>
   <button class="btn ghost sm" id="btnDemo">Try a demo video (no recording needed)</button>
-  <p class="foot">Lab 4 pilot &middot; v1.019</p>
+  <p class="foot">Lab 4 pilot &middot; v1.020</p>
 </section>
 
 <!-- ============ 2. 개념 고르기 ============ -->
@@ -341,7 +341,16 @@ window.addEventListener('load',function(){ setTimeout(function(){
   <div class="note" id="rsSoWhat"></div>
   <button class="btn ghost" id="rsFix">Something wrong? Remove objects</button>
   <button class="btn" data-go="pick">Go record the next one</button>
-  <button class="btn ghost sm" id="rsSave">Save this image</button>
+  <div class="card tight" id="rsSaveBox">
+    <h3 style="margin:2px 0 4px">Save your result</h3>
+    <div class="row">
+      <div><button class="btn sm" id="rsSave">Save image</button>
+        <p class="sub" style="font-size:12.5px;margin:6px 2px 0">One picture with every duck path</p></div>
+      <div><button class="btn sm" id="rsSaveVid">Save video</button>
+        <p class="sub" style="font-size:12.5px;margin:6px 2px 0" id="rsVidNote">The whole video with paths and arrows drawn on it</p></div>
+    </div>
+    <div class="prog" id="rsRecBar" style="display:none;margin-top:10px"><i id="rsRecFill"></i></div>
+  </div>
 </section>
 
 </main>
@@ -1503,9 +1512,13 @@ $('rsSave').onclick=async ()=>{
   const sp=speeds(), vmed=median(sp.map(s=>s.v));
   if(vmed>0) c.fillText('Median speed '+vmed.toFixed(1)+' cm/s', 18, Math.round(S.vw/16)+Math.round(S.vw/18));
   const name='Lab4_'+cellKey(S.concept,S.obs)+'_'+Date.now()+'.png';
-  cv.toBlob(async blob=>{
+  cv.toBlob(blob=>saveBlob(blob, name, 'If it did not save, long-press the image to save it.'),'image/png');
+};
+
+/* 파일 하나를 폰/PC 에 저장한다 (이미지·영상 공용) */
+async function saveBlob(blob, name, hint){
     /* 아티팩트 뷰어 안에서는 <a download> 가 통째로 막혀 있다.
-       downloads 능력을 쓰고, 그게 없을 때(로컬 파일로 열었을 때)만 링크로 떨어뜨린다. */
+       downloads 능력을 쓰고, 그게 없을 때(GitHub Pages·로컬 파일)만 링크로 떨어뜨린다. */
     if(window.claude && window.claude.use){
       let dl=null;
       try{ dl = await window.claude.use('downloads'); }catch(e){ dl=null; }
@@ -1523,9 +1536,65 @@ $('rsSave').onclick=async ()=>{
     const u=URL.createObjectURL(blob);
     const a=document.createElement('a'); a.href=u; a.download=name; a.target='_blank';
     document.body.appendChild(a); a.click(); a.remove();
-    setTimeout(()=>URL.revokeObjectURL(u), 20000);
-    toast('If it did not save, long-press the image to save it.','warn');
-  },'image/png');
+    setTimeout(()=>URL.revokeObjectURL(u), 60000);
+    toast(hint,'warn');
+}
+
+/* 영상 통째로 저장 (v1.020). 영상을 처음부터 한 번 재생하면서, 매 장면마다
+   [원본 장면 + 결과 화면에 그린 자취·화살표·동그라미] 를 한 캔버스에 합쳐 녹화한다.
+   그래서 영상 길이만큼(예: 15 초) 걸린다. 녹화 형식은 기기가 지원하는 것 중 mp4 를 먼저 고른다
+   (iPhone Safari = mp4, 일부 Android/PC Chrome = webm). */
+let rsRecording=false;
+$('rsSaveVid').onclick=async ()=>{
+  if(rsRecording) return;
+  if(!window.MediaRecorder || !HTMLCanvasElement.prototype.captureStream){
+    toast('This browser cannot record video. Use <b>Save image</b>, or try Chrome or Safari.','warn'); return;
+  }
+  const types=['video/mp4;codecs=avc1','video/mp4','video/webm;codecs=vp9','video/webm;codecs=vp8','video/webm'];
+  const mime=types.find(t=>{ try{ return MediaRecorder.isTypeSupported(t); }catch(e){ return false; } });
+  if(!mime){ toast('This browser cannot record video. Use <b>Save image</b>.','warn'); return; }
+  stopPlay(); rsRecording=true;
+  const k=Math.min(1, 960/Math.max(S.vw,S.vh));
+  const W=Math.round(S.vw*k/2)*2, H=Math.round(S.vh*k/2)*2;    // 짝수 크기 (인코더 요구)
+  const cv=document.createElement('canvas'); cv.width=W; cv.height=H;
+  const c=cv.getContext('2d');
+  const stream=cv.captureStream(30);
+  let rec; try{ rec=new MediaRecorder(stream,{mimeType:mime, videoBitsPerSecond:4e6}); }
+  catch(e){ rsRecording=false; toast('Could not start recording on this device.','bad'); return; }
+  const chunks=[]; rec.ondataavailable=e=>{ if(e.data && e.data.size) chunks.push(e.data); };
+  const btns=['rsSave','rsSaveVid','rsPlay','rsFix'].map($);
+  btns.forEach(b=>b.disabled=true);
+  $('rsSaveVid').textContent='Recording…'; $('rsRecBar').style.display='';
+  const dur=S.dur||rsVid.duration||1;
+  const cc=CONCEPTS[S.concept], title=cc.name+(S.obs?' (with obstruction)':'')+'  ·  ducks: '+S.tracks.length;
+  const done=new Promise(res=>{ rec.onstop=res; });
+  try{ rsVid.currentTime=0; }catch(e){}
+  await new Promise(r=>setTimeout(r,250));
+  rec.start(250);
+  try{ await rsVid.play(); }catch(e){}
+  const tick=()=>{
+    const t=rsVid.currentTime||0;
+    $('rsTime').value=Math.min(1000, t/dur*1000);
+    rsDraw();                                         // 결과 화면 캔버스에 덧그림을 그린다
+    c.drawImage(rsVid,0,0,W,H);
+    c.drawImage(rsCv, rsOx, rsOy, S.vw*rsK, S.vh*rsK, 0, 0, W, H);   // 영상 부분만 잘라 겹친다
+    c.fillStyle='rgba(0,0,0,.5)'; c.fillRect(0,0,W,Math.round(H*0.075));
+    c.fillStyle='#fff'; c.font='bold '+Math.round(W/26)+'px system-ui'; c.textBaseline='middle';
+    c.fillText(title+'  ·  '+t.toFixed(1)+' s', 12, Math.round(H*0.0375));
+    $('rsRecFill').style.width=(100*t/dur).toFixed(0)+'%';
+    if(rsVid.ended || t>=dur-0.04){ rec.stop(); return; }
+    requestAnimationFrame(tick);
+  };
+  requestAnimationFrame(tick);
+  await done;
+  try{ rsVid.pause(); }catch(e){}
+  rsRecording=false; btns.forEach(b=>b.disabled=false);
+  $('rsSaveVid').textContent='Save video'; $('rsRecBar').style.display='none';
+  const ext=mime.indexOf('mp4')>=0?'mp4':'webm';
+  const blob=new Blob(chunks,{type:mime.split(';')[0]});
+  if(!blob.size){ toast('Recording came out empty. Please try again.','bad'); return; }
+  saveBlob(blob, 'Lab4_'+cellKey(S.concept,S.obs)+'_'+Date.now()+'.'+ext,
+           'If it did not save, open the video, then use Share → Save Video.');
 };
 
 /* ---------------------------------------------------------------- 시작 */
