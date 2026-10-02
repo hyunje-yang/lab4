@@ -215,7 +215,7 @@ window.addEventListener('load',function(){ setTimeout(function(){
 
   <button class="btn" id="btnStart">Start</button>
   <button class="btn ghost sm" id="btnDemo">Try a demo video (no recording needed)</button>
-  <p class="foot">Lab 4 pilot &middot; v1.018</p>
+  <p class="foot">Lab 4 pilot &middot; v1.019</p>
 </section>
 
 <!-- ============ 2. 개념 고르기 ============ -->
@@ -257,8 +257,8 @@ window.addEventListener('load',function(){ setTimeout(function(){
   </div>
   <h3>Before you record, check both</h3>
   <div class="card tight">
-    <label class="chk"><input type="checkbox" id="shMount"> The phone is on the tripod, <b>pointing straight down</b> at the water, and does not move</label>
-    <label class="chk"><input type="checkbox" id="shFrame"> Both walls are on screen, and no ducks are in the water yet</label>
+    <label class="chk"><input type="checkbox" id="shMount"><span>The phone is on the tripod, <b>pointing straight down</b> at the water, and does not move</span></label>
+    <label class="chk"><input type="checkbox" id="shFrame"><span>Both walls are on screen, and no ducks are in the water yet</span></label>
   </div>
   <p class="sub">Start recording first, then walk upstream behind the phone and put the ducks in.</p>
   <label class="btn off" id="lbCam" for="fileCam">Record video</label>
@@ -835,6 +835,7 @@ function geomUpdate(){
   S.lenEst = estLength(S.roi, S.vw, S.vh, S.widthCm);
   const L=secLen(), W=S.widthCm;
   S.H = solveH(S.roi, [{x:0,y:0},{x:W,y:0},{x:W,y:L},{x:0,y:L}]);
+  S.Hinv = solveH([{x:0,y:0},{x:W,y:0},{x:W,y:L},{x:0,y:L}], S.roi);   // 지도(cm) -> 화면
   if(S.H){ const c=S.roi.reduce((a,p)=>({x:a.x+p.x/4,y:a.y+p.y/4}),{x:0,y:0});
            S.Hsign = Math.sign(applyH(S.H,c.x,c.y).w) || 1; }
 }
@@ -1105,8 +1106,43 @@ function buildTracks(){
     t.auto = S.H ? (t.along < 0.7*L) : (t.net!=null && t.net<4);
     t.off = t.auto;
   });
+  /* v1.019: 장애물 없는 흐름은 매끈하다. 오리 경로가 지그재그인 것은 검출 중심이 흔들린 탓이다
+     (분홍 오리가 벽 띠에 걸쳐 반쪽만 보이면 중심이 좌우로 튄다). 그래서 장애물이 없을 때는
+     경로를 직선~완만한 곡선(2차식)으로 맞춘다. 장애물이 있으면 실제로 출렁이므로 건드리지 않는다. */
+  if(!S.obs && S.H && S.Hinv) all.forEach(smoothTrack);
   S.allTracks = all;
   S.tracks = all.filter(t=>!t.off);
+}
+
+/* 2차식 최소제곱 y = a + b·x + c·x² (x 는 가운데·크기를 맞춰 계산이 안정되게). 튀는 점은 한 번 걸러 다시 맞춘다. */
+function fit2(xs, ys){
+  const n=xs.length, mx=xs.reduce((a,b)=>a+b,0)/n;
+  const sx=Math.max(1e-9, Math.max(...xs.map(v=>Math.abs(v-mx))));
+  const solve=(idx)=>{
+    const M=[[0,0,0,0],[0,0,0,0],[0,0,0,0]];
+    idx.forEach(i=>{ const u=(xs[i]-mx)/sx, r=[1,u,u*u];
+      for(let a=0;a<3;a++){ for(let b=0;b<3;b++) M[a][b]+=r[a]*r[b]; M[a][3]+=r[a]*ys[i]; } });
+    const deg = idx.length>=6 ? 3 : 2;            // 점이 적으면 직선
+    for(let c=0;c<deg;c++){ let pv=c; for(let r=c+1;r<deg;r++) if(Math.abs(M[r][c])>Math.abs(M[pv][c])) pv=r;
+      [M[c],M[pv]]=[M[pv],M[c]]; if(Math.abs(M[c][c])<1e-12) return null;
+      for(let r=0;r<deg;r++){ if(r===c) continue; const f=M[r][c]/M[c][c]; for(let k=c;k<4;k++) M[r][k]-=f*M[c][k]; } }
+    const co=[0,0,0]; for(let c=0;c<deg;c++) co[c]=M[c][3]/M[c][c];
+    return v=>{ const u=(v-mx)/sx; return co[0]+co[1]*u+co[2]*u*u; };
+  };
+  const all=xs.map((_,i)=>i); let f=solve(all); if(!f) return null;
+  const res=all.map(i=>Math.abs(ys[i]-f(xs[i]))), srt=[...res].sort((a,b)=>a-b);
+  const lim=3*1.4826*srt[srt.length>>1]+0.5;
+  const keep=all.filter(i=>res[i]<=lim);
+  if(keep.length>=4 && keep.length<n){ const g=solve(keep); if(g) f=g; }
+  return f;
+}
+/* 지도(cm) 위에서: 흐름 방향 위치 = 시간의 2차식, 가로 위치 = 흐름 방향 위치의 2차식. 그 다음 화면으로 되돌린다. */
+function smoothTrack(t){
+  const Wp=t.pts.map(toW); if(Wp.some(w=>!w) || t.pts.length<4) return;
+  const fy=fit2(t.pts.map(p=>p.t), Wp.map(w=>w.y)); if(!fy) return;
+  const fx=fit2(Wp.map(w=>w.y), Wp.map(w=>w.x)); if(!fx) return;
+  t.raw=t.pts;
+  t.pts=t.pts.map(p=>{ const y=fy(p.t), x=fx(y), q=applyH(S.Hinv,x,y); return {i:p.i,t:p.t,x:q.x,y:q.y}; });
 }
 
 function speeds(){
@@ -1348,7 +1384,9 @@ function rsDraw(){
       c.globalAlpha = (kind==='stream')? .45 : .95;
       c.beginPath(); c.moveTo(X(p[0]),Y(p[0]));
       for(let i=1;i<p.length;i++) c.lineTo(X(p[i]),Y(p[i]));
-      c.stroke(); c.globalAlpha=1;
+      c.stroke();
+      trailArrows(c, p.map(q=>({x:X(q),y:Y(q)})), TCOL[k%TCOL.length], 70*rsK*(S.vw/720), Math.max(9,12*rsK*(S.vw/720)));
+      c.globalAlpha=1;
     });
   }
 
@@ -1398,6 +1436,22 @@ function rsDraw(){
   }
   $('rsHud').textContent = t.toFixed(2)+' s  ·  ducks: '+now.length;
 }
+/* 자취 위에 흐르는 방향을 보여 주는 작은 화살촉을 일정 간격(gap, 화면 px)마다 찍는다 */
+function trailArrows(c, P, col, gap, sz){
+  if(P.length<2) return;
+  let acc=gap*0.5;
+  c.fillStyle=col;
+  for(let i=1;i<P.length;i++){
+    const a=P[i-1], b=P[i], L=Math.hypot(b.x-a.x,b.y-a.y); if(L<1e-6) continue;
+    let d=gap-acc;
+    while(d<=L){ const x=a.x+(b.x-a.x)*d/L, y=a.y+(b.y-a.y)*d/L, an=Math.atan2(b.y-a.y,b.x-a.x);
+      c.beginPath(); c.moveTo(x+sz*0.6*Math.cos(an), y+sz*0.6*Math.sin(an));
+      c.lineTo(x-sz*0.6*Math.cos(an)+sz*0.5*Math.cos(an+Math.PI/2), y-sz*0.6*Math.sin(an)+sz*0.5*Math.sin(an+Math.PI/2));
+      c.lineTo(x-sz*0.6*Math.cos(an)-sz*0.5*Math.cos(an+Math.PI/2), y-sz*0.6*Math.sin(an)-sz*0.5*Math.sin(an+Math.PI/2));
+      c.closePath(); c.fill(); d+=gap; }
+    acc=(acc+L)%gap;
+  }
+}
 function arrow(c,x1,y1,x2,y2,col,w){
   c.strokeStyle=col; c.fillStyle=col; c.lineWidth=w||3; c.lineCap='round';
   c.beginPath(); c.moveTo(x1,y1); c.lineTo(x2,y2); c.stroke();
@@ -1441,6 +1495,7 @@ $('rsSave').onclick=async ()=>{
     const p=tr.pts; if(p.length<2) return;
     c.strokeStyle=TCOL[k%TCOL.length]; c.lineWidth=Math.max(3, S.vw/200); c.lineJoin='round';
     c.beginPath(); c.moveTo(p[0].x,p[0].y); p.slice(1).forEach(q=>c.lineTo(q.x,q.y)); c.stroke();
+    trailArrows(c, p, TCOL[k%TCOL.length], S.vh/9, Math.max(14,S.vw/40));
   });
   c.fillStyle='#fff'; c.font='bold '+Math.round(S.vw/22)+'px system-ui';
   const cc=CONCEPTS[S.concept];
