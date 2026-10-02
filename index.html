@@ -215,7 +215,7 @@ window.addEventListener('load',function(){ setTimeout(function(){
 
   <button class="btn" id="btnStart">Start</button>
   <button class="btn ghost sm" id="btnDemo">Try a demo video (no recording needed)</button>
-  <p class="foot">Lab 4 pilot &middot; v1.017</p>
+  <p class="foot">Lab 4 pilot &middot; v1.018</p>
 </section>
 
 <!-- ============ 2. 개념 고르기 ============ -->
@@ -307,11 +307,11 @@ window.addEventListener('load',function(){ setTimeout(function(){
 <!-- ============ 7. 검출 확인 ============ -->
 <section class="screen" id="s-check">
   <div class="stepdots"><i class="dot on"></i><i class="dot on"></i><i class="dot on"></i><i class="dot on"></i></div>
-  <h2 id="ckTtl">What the app found</h2>
+  <h2 id="ckTtl">Fix what the app found</h2>
   <div class="stage" style="height:44vh;min-height:250px">
     <canvas id="ckCv"></canvas>
   </div>
-  <p class="sub" id="ckHint">Each line is one object the app tracked. <b>Tap a line</b> to see what it is. If it is not a duck, remove it.</p>
+  <p class="sub" id="ckHint">Each line is one object the app tracked. A real duck always crosses the whole section, so lines that did not are already removed (grey). <b>Tap a line</b> to see what it is, then remove it or bring it back.</p>
   <div class="row" id="ckSelRow" style="display:none">
     <button class="btn sm" id="ckToggle">Remove</button>
   </div>
@@ -339,6 +339,7 @@ window.addEventListener('load',function(){ setTimeout(function(){
   <div class="legend" id="rsLegend"></div>
   <div class="card tight" id="rsStats"></div>
   <div class="note" id="rsSoWhat"></div>
+  <button class="btn ghost" id="rsFix">Something wrong? Remove objects</button>
   <button class="btn" data-go="pick">Go record the next one</button>
   <button class="btn ghost sm" id="rsSave">Save this image</button>
 </section>
@@ -840,7 +841,9 @@ function geomUpdate(){
 function toW(p){ return S.H ? applyH(S.H,p.x,p.y) : null; }
 /* v1.016: 0 으로 바꿈. 수직 촬영 영상(2026-10-02)에서 벽에 붙어 흐르는 오리(분홍 오리 포함)의 중심이
    찍은 벽선에서 1 cm 안쪽에 있어 1.5 cm 여유를 두면 통째로 잘렸다. 수직으로 찍으면 유리 반사도 거의 없다. */
-const WALL_MARGIN=0;
+/* v1.018: -3 cm (= 찍은 벽선 바깥 3 cm 까지 인정). 위에서 보면 벽(유리+그림자)이 두꺼운 띠로 보여서
+   벽에 붙어 흐르는 오리의 중심이 그 띠 위에 올라간다 (Streakline 영상에서 오리 2마리가 여기서 사라졌다). */
+const WALL_MARGIN=-3;
 function inChannel(x,y){
   if(!S.H) return true;
   const w=applyH(S.H,x,y);
@@ -1027,8 +1030,10 @@ async function runAnalysis(){
   }
 
   buildTracks();
+  /* v1.018: 먼저 결과(오리 이동)를 보여 준다. 고치고 싶으면 결과 화면에서 확인 화면으로 간다. */
   fillCheck();
-  show('check');
+  S.tracks = S.allTracks.filter(t=>!t.off);
+  if(S.tracks.length){ fillResult(); show('result'); } else show('check');
 }
 
 function buildTracks(){
@@ -1058,14 +1063,46 @@ function buildTracks(){
     fr.pts.forEach((p,j)=>{ if(!used.has(j)) tracks.push({pts:[{i,t:fr.t,x:p.x,y:p.y}]}); });
   });
   /* 빠른 오리(장애물 뒤)는 화면에 1초도 안 머문다. 최소 6점이면 경로로 인정한다. */
+  /* v1.018: 끊긴 조각 잇기. 한 오리가 몇 장 동안 안 보이면 경로가 두 조각으로 나뉜다.
+     조각 A 가 끝난 뒤 12 장 안에 A 의 속도로 예측한 자리 근처에서 시작한 조각 B 는 같은 오리로 본다. */
+  const G2=0.08*diag;
+  let merged=true;
+  while(merged){
+    merged=false;
+    tracks.sort((a,b)=>a.pts[0].i-b.pts[0].i);
+    for(const A of tracks){
+      if(A.dead) continue;
+      const n=A.pts.length, e=A.pts[n-1], pr=A.pts[Math.max(0,n-3)];
+      const di=Math.max(1,e.i-pr.i), vx=(e.x-pr.x)/di, vy=(e.y-pr.y)/di;
+      let best=null, bd=G2;
+      for(const B of tracks){
+        if(B===A || B.dead) continue;
+        const b0=B.pts[0], gap=b0.i-e.i;
+        if(gap<1 || gap>12) continue;
+        const d=Math.hypot(b0.x-(e.x+vx*gap), b0.y-(e.y+vy*gap));
+        if(d<bd){ bd=d; best=B; }
+      }
+      if(best){ A.pts=A.pts.concat(best.pts); best.dead=true; merged=true; }
+    }
+    for(let k=tracks.length-1;k>=0;k--) if(tracks[k].dead) tracks.splice(k,1);
+  }
   const all = tracks.filter(t=>t.pts.length>=Math.max(6, Math.round(S.det.length*0.04)));
   all.sort((a,b)=>a.pts[0].i-b.pts[0].i);
-  /* 실제로 4 cm 도 안 움직인 것은 오리가 아니라고 보고 미리 빼 둔다 (사용자가 되살릴 수 있다) */
+  /* v1.018 (현제님 기준): 진짜 오리는 반드시 구간을 끝에서 끝까지 통과한다.
+     물 흐름 방향(대부분의 경로가 움직인 방향)으로 구간 길이 L 의 70% 이상 가지 못한 것은
+     오리가 아니라고 보고 미리 빼 둔다 (중간에서 나타났다 사라지는 것, 바닥에 멈춘 것 등).
+     사용자가 확인 화면에서 되살릴 수 있다. 70% 인 이유: 화면 가장자리에서 오리가 반쯤 잘려
+     처음·끝 몇 cm 는 못 찾는다. */
+  const L=secLen();
+  const dys=all.map(t=>{ const a=toW(t.pts[0]), b=toW(t.pts[t.pts.length-1]); return (a&&b)? b.y-a.y : 0; });
+  const dir = dys.reduce((s,v)=>s+v,0) >= 0 ? 1 : -1;
+  S.flowDir = dir;
   all.forEach((t,n)=>{
     t.id=n+1;
     const a=toW(t.pts[0]), b=toW(t.pts[t.pts.length-1]);
     t.net = (a&&b) ? Math.hypot(b.x-a.x, b.y-a.y) : null;
-    t.auto = (t.net!=null && t.net<4);
+    t.along = dys[n]*dir;                         // 흐름 방향으로 간 거리 (cm)
+    t.auto = S.H ? (t.along < 0.7*L) : (t.net!=null && t.net<4);
     t.off = t.auto;
   });
   S.allTracks = all;
@@ -1175,7 +1212,7 @@ function ckUI(){
   $('ckSelRow').style.display = tr ? '' : 'none';
   if(tr){
     $('ckToggle').textContent = (tr.off ? 'Bring back #' : 'Remove #')+tr.id+
-      (tr.auto && tr.off ? ' (it barely moved)' : '');
+      (tr.auto && tr.off ? ' (did not cross the section)' : '');
     $('ckToggle').className = 'btn sm' + (tr.off ? '' : ' ghost');
   }
 }
@@ -1251,6 +1288,7 @@ function fillCheckStats(){
 }
 function c2(){ return CONCEPTS[S.concept] ? CONCEPTS[S.concept].name : 'this concept'; }
 $('ckRetry').onclick=()=>{ S.sens=Math.min(2,S.sens+1); toast('Searching again with higher sensitivity.'); runAnalysis(); };
+$('rsFix').onclick=()=>{ stopPlay(); fillCheck(); show('check'); };
 $('ckGo').onclick=()=>{
   S.tracks = S.allTracks.filter(t=>!t.off);
   if(!S.tracks.length){ toast('No ducks are kept. Bring at least one back, or record again.','warn'); return; }
