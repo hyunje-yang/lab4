@@ -1,0 +1,268 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Frame Rate Check</title>
+<style>
+:root{ --bg:#fff; --fg:#1d1d1f; --mut:#6e6e73; --card:#f2f2f5; --acc:#0a66d8; --ok:#1a7f37; --bad:#c62828; }
+@media (prefers-color-scheme: dark){ :root:not([data-theme="light"]){ --bg:#111; --fg:#eee; --mut:#9a9aa0; --card:#1e1e22; --acc:#5aa2ff; --ok:#4cc26a; --bad:#ff6b6b; } }
+:root[data-theme="dark"]{ --bg:#111; --fg:#eee; --mut:#9a9aa0; --card:#1e1e22; --acc:#5aa2ff; --ok:#4cc26a; --bad:#ff6b6b; }
+*{ box-sizing:border-box; }
+body{ margin:0; background:var(--bg); color:var(--fg); font:16px/1.45 -apple-system,system-ui,Segoe UI,Roboto,sans-serif; }
+main{ max-width:640px; margin:0 auto; padding:16px; }
+h1{ font-size:22px; margin:8px 0 4px; }
+h2{ font-size:17px; margin:0 0 6px; }
+p{ margin:6px 0; }
+.mut{ color:var(--mut); font-size:14px; }
+.card{ background:var(--card); border-radius:12px; padding:14px; margin:14px 0; }
+button,label.btn{ display:inline-block; font:inherit; font-weight:600; border:0; border-radius:10px; padding:11px 14px; margin:4px 6px 4px 0;
+  background:var(--acc); color:#fff; cursor:pointer; }
+button.sec{ background:transparent; color:var(--acc); border:1.5px solid var(--acc); }
+pre{ white-space:pre-wrap; word-break:break-word; background:var(--bg); border-radius:8px; padding:10px; font:12.5px/1.4 ui-monospace,Menlo,Consolas,monospace; margin:8px 0 0; min-height:2em; }
+.big{ font-size:18px; font-weight:700; }
+.ok{ color:var(--ok); } .bad{ color:var(--bad); }
+video{ width:100%; max-height:240px; background:#000; border-radius:8px; margin-top:8px; display:none; }
+ol{ margin:6px 0; padding-left:20px; }
+</style>
+</head>
+<body>
+<main>
+<h1>Frame rate check</h1>
+<p class="mut">Lab 4 test page. It answers two questions for this phone: (1) what a slow-motion or 60 fps video looks like when a web page opens it, and (2) how fast the in-browser camera can run. Nothing is uploaded. Everything stays on the phone.</p>
+
+<div class="card">
+  <h2>1. Check a video you already filmed</h2>
+  <ol class="mut">
+    <li>In the normal Camera app, film about 5 seconds of something moving (a hand wave is fine).
+      Do it once in <b>Slo-mo</b> (iPhone) or <b>Slow motion</b> (Galaxy). If you can, also film once in normal video at <b>60 fps</b>.</li>
+    <li>Come back here and pick the video.</li>
+  </ol>
+  <label class="btn" for="pick">Pick a video</label>
+  <input id="pick" type="file" accept="video/*" hidden>
+  <div id="vSum" class="big"></div>
+  <video id="vid" muted playsinline preload="auto"></video>
+  <pre id="vOut"></pre>
+</div>
+
+<div class="card">
+  <h2>2. Check the in-browser camera</h2>
+  <p class="mut">The browser will ask for camera permission. It asks the back camera for 240, 120, 60 and 30 fps and reports what it actually gets.</p>
+  <button id="camBtn">Test camera</button>
+  <video id="cam" muted playsinline autoplay></video>
+  <pre id="cOut"></pre>
+</div>
+
+<div class="card">
+  <h2>3. Send the results</h2>
+  <p class="mut">Copy and paste into a message, or take a screenshot of this page.</p>
+  <button id="copyBtn">Copy all results</button> <span id="copyMsg" class="mut"></span>
+</div>
+</main>
+
+<script>
+'use strict';
+const $=id=>document.getElementById(id);
+const log={v:[], c:[]};
+function out(which, line){ log[which].push(line); $(which==='v'?'vOut':'cOut').textContent=log[which].join('\n'); }
+const head = 'UA: '+navigator.userAgent;
+
+/* ---------- MP4 / MOV box reader: only the parts needed for frame timing ---------- */
+async function readBytes(file, off, len){ return new DataView(await file.slice(off, off+len).arrayBuffer()); }
+function fourcc(dv,o){ return String.fromCharCode(dv.getUint8(o),dv.getUint8(o+1),dv.getUint8(o+2),dv.getUint8(o+3)); }
+function u64(dv,o){ return dv.getUint32(o)*4294967296 + dv.getUint32(o+4); }
+
+async function topBoxes(file){
+  const boxes=[]; let off=0;
+  while(off+8<=file.size && boxes.length<64){
+    const dv=await readBytes(file, off, 16);
+    let size=dv.getUint32(0); const type=fourcc(dv,4); let hdr=8;
+    if(size===1){ size=u64(dv,8); hdr=16; } else if(size===0){ size=file.size-off; }
+    if(size<8) break;
+    boxes.push({type, off, size, hdr}); off+=size;
+  }
+  return boxes;
+}
+const CONTAINERS=new Set(['moov','trak','mdia','minf','stbl','edts','udta']);
+function walk(dv, start, end, path, cb){
+  let o=start;
+  while(o+8<=end){
+    let size=dv.getUint32(o); const type=fourcc(dv,o+4); let hdr=8;
+    if(size===1){ size=u64(dv,o+8); hdr=16; } else if(size===0){ size=end-o; }
+    if(size<8 || o+size>end) break;
+    const p=path.concat(type);
+    cb(type, o+hdr, o+size, p);
+    if(CONTAINERS.has(type)) walk(dv, o+hdr, o+size, p, cb);
+    o+=size;
+  }
+}
+function parseMoov(dv){
+  const res={mvhd:null, tracks:[]}; let tr=null;
+  walk(dv, 0, dv.byteLength, [], (type, s, e, path)=>{
+    const ver=dv.getUint8(s);
+    if(type==='mvhd'){ res.mvhd = ver===1 ? {ts:dv.getUint32(s+20), dur:u64(dv,s+24)} : {ts:dv.getUint32(s+12), dur:dv.getUint32(s+16)}; }
+    else if(type==='trak'){ tr={elst:[], stts:[], hdlr:'', fmt:''}; res.tracks.push(tr); }
+    else if(!tr) return;
+    else if(type==='elst'){
+      const n=dv.getUint32(s+4); let o=s+8;
+      for(let i=0;i<n && i<20;i++){
+        if(ver===1){ tr.elst.push({seg:u64(dv,o), mt:u64(dv,o+8), rate:dv.getInt16(o+16)+dv.getUint16(o+18)/65536}); o+=20; }
+        else { tr.elst.push({seg:dv.getUint32(o), mt:dv.getInt32(o+4), rate:dv.getInt16(o+8)+dv.getUint16(o+10)/65536}); o+=12; }
+      }
+    }
+    else if(type==='mdhd'){ tr.ts = ver===1 ? dv.getUint32(s+20) : dv.getUint32(s+12);
+                            tr.dur= ver===1 ? u64(dv,s+24)     : dv.getUint32(s+16); }
+    else if(type==='hdlr' && path[path.length-2]==='mdia'){ tr.hdlr=fourcc(dv,s+8); }   // MOV has a 2nd hdlr under minf
+    else if(type==='stsd'){ if(dv.getUint32(s+4)>0) tr.fmt=fourcc(dv,s+12); }
+    else if(type==='stts'){
+      const n=dv.getUint32(s+4); let o=s+8;
+      for(let i=0;i<n && o+8<=e;i++,o+=8) tr.stts.push([dv.getUint32(o), dv.getUint32(o+4)]);
+    }
+  });
+  return res;
+}
+function asciiStrings(u8, keep){
+  const found=new Set(); let cur='';
+  for(let i=0;i<u8.length;i++){
+    const c=u8[i];
+    if(c>=32 && c<127){ cur+=String.fromCharCode(c); }
+    else { if(cur.length>=6 && keep.test(cur)) found.add(cur.slice(0,90)); cur=''; }
+    if(found.size>=25) break;
+  }
+  return [...found];
+}
+const KEEP=/slow|motion|fps|frame|rate|com\.apple|samsung|sef|android|capture/i;
+
+async function analyzeFile(file){
+  out('v', head);
+  out('v', 'File: '+file.name+'  |  '+(file.size/1e6).toFixed(1)+' MB  |  type '+(file.type||'?'));
+  let boxes;
+  try{ boxes=await topBoxes(file); }catch(e){ out('v','Could not read file boxes: '+e); return null; }
+  out('v', 'Top-level boxes: '+boxes.map(b=>b.type+'('+(b.size/1e6).toFixed(2)+'MB)').join(' '));
+  const mv=boxes.find(b=>b.type==='moov');
+  if(!mv){ out('v','No moov box found (not MP4/MOV?).'); return null; }
+  if(mv.size>60e6){ out('v','moov too big to read: '+mv.size); return null; }
+  const dv=await readBytes(file, mv.off+mv.hdr, mv.size-mv.hdr);
+  const m=parseMoov(dv);
+  if(m.mvhd) out('v', 'Movie duration (container): '+(m.mvhd.dur/m.mvhd.ts).toFixed(3)+' s');
+  let main=null;
+  m.tracks.forEach((t,k)=>{
+    let n=0, sum=0, dmin=Infinity, dmax=0;
+    t.stts.forEach(([c,d])=>{ n+=c; sum+=c*d; if(d>0 && d<dmin) dmin=d; if(d>dmax) dmax=d; });   // last frame may have 0 spacing
+    const sec = t.ts ? sum/t.ts : 0;
+    let line='Track '+k+': '+t.hdlr+' '+t.fmt+'  samples '+n+'  media '+sec.toFixed(3)+' s';
+    if(t.hdlr==='vide' && n>0 && sec>0){
+      const fps=n/sec;
+      line+='  ->  '+fps.toFixed(2)+' fps (frame interval '+(1000*dmin/t.ts).toFixed(2)+' to '+(1000*dmax/t.ts).toFixed(2)+' ms)';
+      if(!main || n>main.n) main={n, sec, fps, fpsMin:t.ts/dmax, fpsMax:t.ts/dmin};
+      // runs of different frame intervals = speed sections
+      const runs=t.stts.slice(0,12).map(([c,d])=>c+'x'+(1000*d/t.ts).toFixed(2)+'ms').join(', ');
+      line+='\n    interval runs: '+runs+(t.stts.length>12?' ... ('+t.stts.length+' runs)':'');
+    }
+    if(t.elst.length) line+='\n    edit list: '+t.elst.map(e=>'seg '+e.seg+' mt '+e.mt+' rate '+e.rate.toFixed(3)).join(' | ');
+    out('v', line);
+  });
+  const sm=asciiStrings(new Uint8Array(dv.buffer), KEEP);
+  if(sm.length) out('v', 'Metadata strings (moov): '+sm.join(' ; '));
+  try{
+    const tailLen=Math.min(file.size, 262144);
+    const tail=new Uint8Array(await file.slice(file.size-tailLen).arrayBuffer());
+    const st=asciiStrings(tail, KEEP);
+    if(st.length) out('v', 'Metadata strings (file end): '+st.join(' ; '));
+  }catch(e){}
+  return main;
+}
+
+/* ---------- what the browser's video player does with it ---------- */
+function waitEv(el, ev, ms){ return new Promise((res,rej)=>{ const t=setTimeout(()=>rej(new Error(ev+' timeout')),ms);
+  el.addEventListener(ev, ()=>{ clearTimeout(t); res(); }, {once:true}); }); }
+function frameHash(v, cv){
+  const c=cv.getContext('2d', {willReadFrequently:true}); c.drawImage(v,0,0,cv.width,cv.height);
+  const d=c.getImageData(0,0,cv.width,cv.height).data; let h=0;
+  for(let i=0;i<d.length;i+=4) h=(h*31 + d[i] + 3*d[i+1] + 7*d[i+2])>>>0;
+  return h;
+}
+async function playerChecks(file, main){
+  const v=$('vid'); v.style.display='block'; v.src=URL.createObjectURL(file);
+  try{ await waitEv(v,'loadedmetadata',10000); }catch(e){ out('v','Player could not open this video: '+e.message); return; }
+  out('v', 'Player: '+v.videoWidth+'x'+v.videoHeight+', duration '+v.duration.toFixed(3)+' s');
+
+  // A) frames shown during slow playback (requestVideoFrameCallback)
+  if('requestVideoFrameCallback' in HTMLVideoElement.prototype){
+    const times=[]; let stop=false;
+    const cb=(now,meta)=>{ times.push(meta.mediaTime); if(!stop) v.requestVideoFrameCallback(cb); };
+    v.requestVideoFrameCallback(cb);
+    v.playbackRate=0.25; v.currentTime=Math.min(0.5, v.duration*0.1);
+    try{ await v.play(); await new Promise(r=>setTimeout(r,3000)); }catch(e){ out('v','Play failed: '+e.message); }
+    stop=true; v.pause();
+    const dts=[]; for(let i=1;i<times.length;i++){ const d=times[i]-times[i-1]; if(d>0) dts.push(d); }
+    dts.sort((a,b)=>a-b);
+    if(dts.length>5){
+      const med=dts[Math.floor(dts.length/2)], lo=dts[Math.floor(dts.length*0.1)];
+      out('v', 'Player frames at 0.25x speed: '+times.length+' frames in 3 s; typical step '+(1000*med).toFixed(2)+' ms ('+(1/med).toFixed(1)+' fps), smallest steps '+(1000*lo).toFixed(2)+' ms ('+(1/lo).toFixed(1)+' fps)');
+    } else out('v','Player frames: too few callbacks ('+times.length+')');
+  } else out('v','requestVideoFrameCallback: not available in this browser');
+
+  // B) can seeking land on neighbouring frames? (the Lab 4 app reads frames by seeking)
+  if(main && main.fps>0){
+    const cv=document.createElement('canvas'); cv.width=48; cv.height=64;
+    const t0=Math.min(1.0, v.duration*0.3), step=1/main.fps, hs=[];
+    for(let k=0;k<10;k++){
+      try{ v.currentTime=t0+k*step; await waitEv(v,'seeked',4000); await new Promise(r=>setTimeout(r,60)); hs.push(frameHash(v,cv)); }
+      catch(e){ hs.push(null); }
+    }
+    let diff=0; for(let k=1;k<hs.length;k++) if(hs[k]!==null && hs[k]!==hs[k-1]) diff++;
+    out('v', 'Seek test: 10 seeks, one frame apart ('+(1000*step).toFixed(2)+' ms): '+diff+' of 9 steps gave a new picture');
+  }
+}
+
+$('pick').onchange=async e=>{
+  const f=e.target.files[0]; if(!f) return;
+  log.v=[]; $('vSum').textContent='Reading...';
+  const main=await analyzeFile(f);
+  if(main){
+    const real=main.fps>=90, slow30=main.fps<45;
+    $('vSum').innerHTML='Stored: <b>'+main.fps.toFixed(1)+' frames per second</b>, '+main.sec.toFixed(1)+' s, '+main.n+' frames.<br>'+
+      (real ? '<span class="ok">High-speed frames are kept with real time.</span>'
+            : (slow30 ? '<span class="bad">Normal frame rate. If this was filmed in slow motion, time was stretched.</span>'
+                      : 'Normal or 60 fps video.'))+
+      (main.fpsMax/main.fpsMin>1.05 ? '<br><span class="bad">Frame spacing is not uniform ('+main.fpsMin.toFixed(1)+' to '+main.fpsMax.toFixed(1)+' fps).</span>' : '');
+  } else $('vSum').textContent='Could not read frame timing.';
+  await playerChecks(f, main);
+};
+
+/* ---------- in-browser camera ---------- */
+$('camBtn').onclick=async ()=>{
+  log.c=[]; out('c', head);
+  if(!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia){ out('c','getUserMedia not available'); return; }
+  const v=$('cam'); v.style.display='block';
+  for(const fr of [240,120,60,30]){
+    let s;
+    try{ s=await navigator.mediaDevices.getUserMedia({audio:false, video:{facingMode:{ideal:'environment'}, frameRate:{ideal:fr}, width:{ideal:1280}, height:{ideal:720}}}); }
+    catch(e){ out('c','ask '+fr+' fps: error '+e.name+' '+e.message); continue; }
+    const tk=s.getVideoTracks()[0], st=tk.getSettings();
+    let cap=''; try{ const c=tk.getCapabilities&&tk.getCapabilities(); if(c&&c.frameRate) cap='  (camera allows '+c.frameRate.min+' to '+c.frameRate.max+' fps)'; }catch(e){}
+    v.srcObject=s; try{ await v.play(); }catch(e){}
+    let n=0, first=null, last=null;
+    if('requestVideoFrameCallback' in HTMLVideoElement.prototype){
+      let stop=false; const cb=(now,meta)=>{ n++; if(first===null) first=meta.mediaTime; last=meta.mediaTime; if(!stop) v.requestVideoFrameCallback(cb); };
+      v.requestVideoFrameCallback(cb); await new Promise(r=>setTimeout(r,2000)); stop=true;
+    } else await new Promise(r=>setTimeout(r,1000));
+    out('c','ask '+fr+' fps -> setting '+(st.frameRate!=null?(+st.frameRate).toFixed(1):'?')+' fps, '+st.width+'x'+st.height+cap+
+             (n ? '; frames shown in 2 s: '+n+' (screen may cap this at 60)' : ''));
+    s.getTracks().forEach(t=>t.stop());
+  }
+  v.srcObject=null; v.style.display='none';
+  out('c','done');
+};
+
+$('copyBtn').onclick=async ()=>{
+  const txt='--- video ---\n'+log.v.join('\n')+'\n--- camera ---\n'+log.c.join('\n');
+  try{ await navigator.clipboard.writeText(txt); $('copyMsg').textContent='Copied.'; }
+  catch(e){ const ta=document.createElement('textarea'); ta.value=txt; document.body.appendChild(ta); ta.select();
+            try{ document.execCommand('copy'); $('copyMsg').textContent='Copied.'; }catch(e2){ $('copyMsg').textContent='Copy failed. Take a screenshot instead.'; }
+            ta.remove(); }
+};
+</script>
+</body>
+</html>
