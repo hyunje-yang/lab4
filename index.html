@@ -215,7 +215,7 @@ window.addEventListener('load',function(){ setTimeout(function(){
 
   <button class="btn" id="btnStart">Start</button>
   <button class="btn ghost sm" id="btnDemo">Try a demo video (no recording needed)</button>
-  <p class="foot">Lab 4 pilot &middot; v1.022</p>
+  <p class="foot">Lab 4 pilot &middot; v1.023</p>
 </section>
 
 <!-- ============ 2. 개념 고르기 ============ -->
@@ -261,12 +261,11 @@ window.addEventListener('load',function(){ setTimeout(function(){
     <label class="chk"><input type="checkbox" id="shFrame"><span>Both walls are on screen, and no ducks are in the water yet</span></label>
   </div>
   <div class="card tight" id="shSlow" style="display:none">
-    <h3 style="margin-top:0">Record in slow motion</h3>
-    <p class="sub">Behind the plate the ducks are too fast for normal video. <b>Record in slow motion</b> asks the camera
-      for 240, then 120, then 60 frames per second, records at the fastest one it gets, and shows that number on screen.</p>
-    <button class="btn off" id="btnSlowRec">Record in slow motion</button>
-    <p class="sub" style="margin-bottom:0">A video from the phone's own Slo-mo mode: choose it below. Slo-mo setting on this phone (iPhone: Settings &rarr; Camera &rarr; Record Slo-mo)</p>
-    <div class="chips" id="shSlowSet"><button data-f="240" class="sel">240 fps</button><button data-f="120">120 fps</button><button data-f="0">Not slow motion</button></div>
+    <h3 style="margin-top:0">Record in slow motion, 240 fps</h3>
+    <p class="sub">Behind the plate the ducks are too fast for normal video. Record with the phone's own <b>Camera app</b>
+      in <b>Slo-mo at 240 fps</b> (iPhone: Settings &rarr; Camera &rarr; Record Slo-mo &rarr; 240 fps).
+      The phone keeps the start and the end at normal speed, so <b>start recording, wait 3 seconds, then put the ducks in</b>.
+      Keep recording 3 seconds after the last duck leaves. Then tap <b>Choose a video you already recorded</b>.</p>
   </div>
   <p class="sub">Start recording first, then walk upstream behind the phone and put the ducks in.</p>
   <label class="btn off" id="lbCam" for="fileCam">Record video</label>
@@ -275,16 +274,6 @@ window.addEventListener('load',function(){ setTimeout(function(){
   <input id="fileLib" type="file" accept="video/*" hidden>
   <button class="btn ghost sm" id="btnDemo2">Use the demo video</button>
   <button class="btn ghost sm" data-go="brief">Back to instructions</button>
-</section>
-
-<!-- ============ 4a. 앱 안에서 슬로모 녹화 (v1.022) ============ -->
-<section class="screen" id="s-cam">
-  <h2>Record in slow motion</h2>
-  <div class="note" id="camInfo">Opening the camera&hellip;</div>
-  <video id="camView" muted playsinline autoplay style="width:100%;max-height:60vh;background:#000;border-radius:10px;display:block"></video>
-  <p class="sub" id="camTime" style="text-align:center;font-size:20px;font-weight:700;margin:8px 0">0.0 s</p>
-  <button class="btn" id="camRec">Start recording</button>
-  <button class="btn ghost sm" id="camBack">Cancel</button>
 </section>
 
 <!-- ============ 4b. 슬로모 확인 (v1.021, 장애물 있음 Streamline 칸만) ============ -->
@@ -442,7 +431,7 @@ const S = {
   shakePx : null,
   shakeSat: false,
   obs     : false,         // 장애물 있음/없음 (매뉴얼 표의 두 줄)
-  slowSet : 240,           // 슬로모 설정 fps (0 = 슬로모 아님). 장애물 있음 Streamline 칸만 묻는다 (v1.021)
+  slowSet : 240,           // 장애물 있음 Streamline 칸은 240 fps 슬로모로 찍어 올린다 (v1.023)
   slowF   : 1,             // 느린 구간 시간 배수. 속도 = 영상 기준 속도 x slowF
   done    : {}
 };
@@ -589,7 +578,6 @@ function show(id, isBack){
 function goBack(){
   stopPlay();
   const cur=curScreen();
-  if(cur==='cam'){ $('camBack').onclick(); return; }   // 카메라를 끄고 촬영 화면으로
   if(cur==='roi' && S.roi.length){ S.roi.pop(); roiDraw(); roiUI(); return; }
   if(!NAV.length){ show('intro',true); return; }
   let prev=NAV.pop(); while(prev===cur && NAV.length) prev=NAV.pop();
@@ -716,71 +704,15 @@ $('btnDemo2').onclick = loadDemo;
 function shGate(){
   const ok=$('shMount').checked && $('shFrame').checked;
   $('lbCam').classList.toggle('off',!ok); $('lbLib').classList.toggle('off',!ok);
-  $('btnSlowRec').classList.toggle('off',!ok);
 }
 $('shMount').onchange=shGate; $('shFrame').onchange=shGate;
-/* ---------------------------------------------------------------- 앱 안 슬로모 녹화 (v1.022)
-   getUserMedia 로 240 -> 120 -> 60 fps 를 차례로 '정확히' 요청하고, 처음 받아 주는 값으로 MediaRecorder 녹화.
-   이렇게 찍은 파일은 시간이 늘어나지 않는다 (영상 1 s = 실제 1 s) -> slowF = 1. */
-let camStream=null, camRecr=null, camChunks=[], camT0=0, camTick=null;
-function camStop(){ if(camTick){ clearInterval(camTick); camTick=null; }
-  if(camStream){ camStream.getTracks().forEach(t=>t.stop()); camStream=null; } $('camView').srcObject=null; }
-async function camOpen(){
-  show('cam'); $('camRec').textContent='Start recording'; $('camRec').disabled=true; $('camTime').textContent='0.0 s';
-  if(!navigator.mediaDevices||!navigator.mediaDevices.getUserMedia||!window.MediaRecorder){
-    $('camInfo').innerHTML='This browser cannot record from the camera inside a web page.'; return; }
-  let got=null, asked=[];
-  for(const fr of [240,120,60]){
-    try{ camStream=await navigator.mediaDevices.getUserMedia({audio:false, video:{facingMode:{ideal:'environment'},
-           frameRate:{exact:fr}, width:{ideal:1280}, height:{ideal:720}}}); got=fr; break; }
-    catch(e){ asked.push(fr+' fps: no'); }
-  }
-  if(!camStream){
-    try{ camStream=await navigator.mediaDevices.getUserMedia({audio:false, video:{facingMode:{ideal:'environment'},
-           frameRate:{ideal:240}, width:{ideal:1280}, height:{ideal:720}}}); }
-    catch(e){ $('camInfo').innerHTML='Camera did not open: '+e.name+'. Allow camera access and try again.'; return; }
-  }
-  const tk=camStream.getVideoTracks()[0], st=tk.getSettings();
-  let cap=''; try{ const c=tk.getCapabilities&&tk.getCapabilities(); if(c&&c.frameRate) cap=' (this camera allows up to '+Math.round(c.frameRate.max)+' fps)'; }catch(e){}
-  const fps = st.frameRate ? Math.round(st.frameRate) : (got||0);
-  S.camFps=fps;
-  $('camInfo').innerHTML='<b>Camera is running at '+(fps||'?')+' frames per second</b>, '+st.width+'&times;'+st.height+cap+'.'+
-    (asked.length ? '<br>Refused: '+asked.join(', ')+'.' : '')+
-    (fps && fps<100 ? '<br>This is not faster than a normal video. The web camera on this phone does not give slow motion.' : '');
-  $('camView').srcObject=camStream; try{ await $('camView').play(); }catch(e){}
-  $('camRec').disabled=false;
-}
-$('btnSlowRec').onclick=()=>{ if($('btnSlowRec').classList.contains('off')) return; camOpen(); };
-$('camBack').onclick=()=>{ if(camRecr&&camRecr.state==='recording'){ camRecr.onstop=null; camRecr.stop(); } camStop(); show('shoot'); };
-$('camRec').onclick=()=>{
-  if(camRecr && camRecr.state==='recording'){ camRecr.stop(); return; }
-  const types=['video/mp4','video/webm;codecs=vp9','video/webm'];
-  const mt=types.find(t=>MediaRecorder.isTypeSupported&&MediaRecorder.isTypeSupported(t))||'';
-  camChunks=[];
-  try{ camRecr=new MediaRecorder(camStream, mt?{mimeType:mt, videoBitsPerSecond:12e6}:{videoBitsPerSecond:12e6}); }
-  catch(e){ toast('Recording could not start: '+e.name,'bad'); return; }
-  camRecr.ondataavailable=e=>{ if(e.data&&e.data.size) camChunks.push(e.data); };
-  camRecr.onstop=()=>{
-    S.recDur=(performance.now()-camT0)/1000; camStop();
-    const blob=new Blob(camChunks,{type:camRecr.mimeType||mt||'video/mp4'});
-    S.slowF=1; loadVideo(URL.createObjectURL(blob));
-  };
-  camRecr.start(500); camT0=performance.now();
-  $('camRec').textContent='Stop recording';
-  camTick=setInterval(()=>{ $('camTime').textContent=((performance.now()-camT0)/1000).toFixed(1)+' s  ·  '+(S.camFps||'?')+' fps'; },100);
-};
-
 function pickedFile(e){
   const f=e.target.files[0]; e.target.value=''; if(!f) return; S.recDur=0;
-  if(isSlowCell() && S.slowSet>0) slowCheck(f);
+  if(isSlowCell()) slowCheck(f);
   else { S.slowF=1; loadVideo(URL.createObjectURL(f)); }
 }
 $('fileCam').onchange = pickedFile;
 $('fileLib').onchange = pickedFile;
-document.querySelectorAll('#shSlowSet button').forEach(b=>b.onclick=()=>{
-  S.slowSet=+b.dataset.f;
-  document.querySelectorAll('#shSlowSet button').forEach(x=>x.classList.toggle('sel',x===b));
-});
 
 /* ---------------------------------------------------------------- 슬로모 확인 (v1.021)
    파일의 moov 를 직접 읽어 저장 fps 와 프레임 간격(stts)을 본다. 정본은 Lab4_fps_probe.html.
@@ -842,6 +774,11 @@ function slShowReal(){ const F=+$('slF').value;
   $('slReal').textContent = F>0 ? (1/F).toFixed(3)+' s of real time' : '--'; }
 $('slF').oninput = ()=>{ slShowReal(); $('slFwhy').textContent='You typed this number.'; };
 
+/* 2026-10-14 실측: 아이폰 240 fps 슬로모 6개 영상의 느린 구간 = 4배 (같은 수로 일반 영상 속도 비교 + 소리).
+   설정값으로 계산한 240/30 = 8 이 아니다. 그래서 기본값을 4 로 둔다. */
+const STRETCH_240 = 4;
+const STRETCH_WHY = 'Measured on this flume: iPhone Slo-mo at 240 fps came out 4&times; slower in the slow part '+
+  '(compared with normal-speed videos of the same flow). Not 240 &divide; 30 = 8.';
 async function slowCheck(file){
   const url=URL.createObjectURL(file);
   S.slowUrl=url; slA=slB=null; $('slTA').textContent=$('slTB').textContent='video --';
@@ -849,11 +786,11 @@ async function slowCheck(file){
   $('slFile').innerHTML='Reading the file&hellip;'; $('slVerdict').textContent='';
   show('slow');
   let T=null; try{ T=await readTiming(file); }catch(e){ T=null; }
-  const guess=S.slowSet/30;
+  const guess=STRETCH_240;
   if(!T){
     $('slFile').innerHTML = kv('File', (file.size/1e6).toFixed(1)+' MB') + kv('Frame timing', 'Could not read');
     $('slVerdict').innerHTML='The app could not read the frame timing inside this file.';
-    slSetF(guess, 'Guess from your setting: '+S.slowSet+' &divide; 30 = '+guess.toFixed(0)+'. Check it with a stopwatch.');
+    slSetF(guess, STRETCH_WHY);
   } else {
     slStep=1/T.fps;
     const uneven = T.fpsHi/T.fpsLo > 1.05;
@@ -870,8 +807,7 @@ async function slowCheck(file){
       $('slVerdict').innerHTML='<b>Time is stretched in the slow part.</b> The file plays only '+T.fps.toFixed(0)+' frames per second, '+
         'but the phone filmed '+S.slowSet+' per second. The middle of the video plays slower than real life, '+
         'and the first and last 1 to 3 seconds play at normal speed.';
-      slSetF(guess, 'Guess from your setting: '+S.slowSet+' &divide; 30 = '+guess.toFixed(0)+
-        '. Our own iPhone 240 fps test videos were stretched only 4&times;, so check this with a stopwatch.');
+      slSetF(guess, STRETCH_WHY);
     }
   }
   slVid.src=url; slVid.load();
