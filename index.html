@@ -215,7 +215,7 @@ window.addEventListener('load',function(){ setTimeout(function(){
 
   <button class="btn" id="btnStart">Start</button>
   <button class="btn ghost sm" id="btnDemo">Try a demo video (no recording needed)</button>
-  <p class="foot">Lab 4 pilot &middot; v1.020</p>
+  <p class="foot">Lab 4 pilot &middot; v1.021</p>
 </section>
 
 <!-- ============ 2. 개념 고르기 ============ -->
@@ -260,6 +260,15 @@ window.addEventListener('load',function(){ setTimeout(function(){
     <label class="chk"><input type="checkbox" id="shMount"><span>The phone is on the tripod, <b>pointing straight down</b> at the water, and does not move</span></label>
     <label class="chk"><input type="checkbox" id="shFrame"><span>Both walls are on screen, and no ducks are in the water yet</span></label>
   </div>
+  <div class="card tight" id="shSlow" style="display:none">
+    <h3 style="margin-top:0">Record in slow motion</h3>
+    <p class="sub">Behind the plate the ducks are too fast for normal video. Record with the phone's own Camera app:
+      iPhone <b>Slo-mo</b>, Galaxy <b>Slow motion</b>. The phone keeps the start and the end at normal speed, so
+      <b>start recording, wait 3 seconds, then put the ducks in</b>. Keep recording 3 seconds after the last duck leaves.
+      Then tap <b>Choose a video you already recorded</b>.</p>
+    <p class="sub" style="margin-bottom:0">Slo-mo setting on this phone (iPhone: Settings &rarr; Camera &rarr; Record Slo-mo)</p>
+    <div class="chips" id="shSlowSet"><button data-f="240" class="sel">240 fps</button><button data-f="120">120 fps</button><button data-f="0">Not slow motion</button></div>
+  </div>
   <p class="sub">Start recording first, then walk upstream behind the phone and put the ducks in.</p>
   <label class="btn off" id="lbCam" for="fileCam">Record video</label>
   <input id="fileCam" type="file" accept="video/*" capture="environment" hidden>
@@ -267,6 +276,37 @@ window.addEventListener('load',function(){ setTimeout(function(){
   <input id="fileLib" type="file" accept="video/*" hidden>
   <button class="btn ghost sm" id="btnDemo2">Use the demo video</button>
   <button class="btn ghost sm" data-go="brief">Back to instructions</button>
+</section>
+
+<!-- ============ 4b. 슬로모 확인 (v1.021, 장애물 있음 Streamline 칸만) ============ -->
+<section class="screen" id="s-slow">
+  <h2>How your phone saved this video</h2>
+  <p class="sub">Slow motion stretches time. The app has to know by how much, or every speed comes out too slow.</p>
+  <div class="card tight" id="slFile">Reading the file&hellip;</div>
+  <div class="note" id="slVerdict"></div>
+  <h3>Time stretch</h3>
+  <div class="card tight">
+    <label class="sub" for="slF">The slow part is stretched by (&times;)</label>
+    <input type="number" id="slF" min="1" max="64" step="0.01" inputmode="decimal">
+    <div class="kv"><span class="k">1 s of video in the slow part</span><span class="v" id="slReal">--</span></div>
+    <p class="sub" id="slFwhy"></p>
+  </div>
+  <h3>Check it with a stopwatch</h3>
+  <p class="sub">If a stopwatch is in the video: move to a frame, read the stopwatch, and type it in.
+    Do this at two moments far apart, both inside the slow part. The app then measures the stretch.</p>
+  <video id="slVid" muted playsinline preload="auto" style="width:100%;max-height:50vh;background:#000;border-radius:10px;display:block"></video>
+  <input type="range" id="slSeek" min="0" max="1000" value="0" aria-label="Move through the video">
+  <div class="chips"><button id="slPrev">&#9664; 1 frame</button><button id="slNext">1 frame &#9654;</button>
+    <span class="sub" id="slT" style="align-self:center;margin-left:6px">video 0.000 s</span></div>
+  <div class="card tight">
+    <div class="chips" style="margin-top:0"><button id="slMarkA">Set A at this frame</button><span class="sub" id="slTA" style="align-self:center">video --</span></div>
+    <input type="text" id="slSwA" placeholder="Stopwatch at A, e.g. 3.25 or 0:03.25" inputmode="decimal">
+    <div class="chips"><button id="slMarkB">Set B at this frame</button><span class="sub" id="slTB" style="align-self:center">video --</span></div>
+    <input type="text" id="slSwB" placeholder="Stopwatch at B" inputmode="decimal">
+    <p class="sub" id="slCal" style="margin-bottom:0"></p>
+  </div>
+  <button class="btn" id="slGo">Use this stretch and continue</button>
+  <button class="btn ghost sm" data-go="shoot">Choose a different video</button>
 </section>
 
 <!-- ============ 5. 채널 네 귀퉁이 ============ -->
@@ -393,6 +433,8 @@ const S = {
   shakePx : null,
   shakeSat: false,
   obs     : false,         // 장애물 있음/없음 (매뉴얼 표의 두 줄)
+  slowSet : 240,           // 슬로모 설정 fps (0 = 슬로모 아님). 장애물 있음 Streamline 칸만 묻는다 (v1.021)
+  slowF   : 1,             // 느린 구간 시간 배수. 속도 = 영상 기준 속도 x slowF
   done    : {}
 };
 
@@ -638,7 +680,11 @@ function fillBrief(){
   $('brKit').innerHTML = (S.obs ? c.kit.concat(['V-notch plate']) : c.kit).map(x=>`<span>${x}</span>`).join('');
   $('brSteps').innerHTML = [MOUNT_STEP].concat(S.obs ? [OBS_STEP].concat(c.steps) : c.steps).map(x=>`<li>${x}</li>`).join('');
   $('shTtl').textContent = 'Record ' + c.name + (S.obs ? ' (with obstruction)' : '');
+  /* v1.021: 장애물 있음 Streamline 칸은 슬로모로 찍는다. 웹 카메라는 슬로모가 안 되니 녹화 버튼을 숨긴다 */
+  $('shSlow').style.display = isSlowCell() ? 'block' : 'none';
+  $('lbCam').style.display  = isSlowCell() ? 'none' : '';
 }
+function isSlowCell(){ return S.obs && S.concept==='stream'; }
 
 /* ---------------------------------------------------------------- 영상 읽기 */
 function b64ToBlob(b64, type){
@@ -651,6 +697,7 @@ S.demoMode=false;
 function loadDemo(){
   const d=DEMOS[cellKey(S.concept,S.obs)];
   if(!d){ toast('No demo video for this one yet.','warn'); return; }
+  S.slowF=1;                                   // 데모 영상은 일반 속도
   loadVideo(d.src, d.roi.map(q=>({x:q[0],y:q[1]})));
 }
 $('btnStart').onclick = ()=>{ S.demoMode=false; show('pick'); };
@@ -662,8 +709,141 @@ function shGate(){
   $('lbCam').classList.toggle('off',!ok); $('lbLib').classList.toggle('off',!ok);
 }
 $('shMount').onchange=shGate; $('shFrame').onchange=shGate;
-$('fileCam').onchange = e=>{ const f=e.target.files[0]; if(f) loadVideo(URL.createObjectURL(f)); };
-$('fileLib').onchange = e=>{ const f=e.target.files[0]; if(f) loadVideo(URL.createObjectURL(f)); };
+function pickedFile(e){
+  const f=e.target.files[0]; e.target.value=''; if(!f) return;
+  if(isSlowCell() && S.slowSet>0) slowCheck(f);
+  else { S.slowF=1; loadVideo(URL.createObjectURL(f)); }
+}
+$('fileCam').onchange = pickedFile;
+$('fileLib').onchange = pickedFile;
+document.querySelectorAll('#shSlowSet button').forEach(b=>b.onclick=()=>{
+  S.slowSet=+b.dataset.f;
+  document.querySelectorAll('#shSlowSet button').forEach(x=>x.classList.toggle('sel',x===b));
+});
+
+/* ---------------------------------------------------------------- 슬로모 확인 (v1.021)
+   파일의 moov 를 직접 읽어 저장 fps 와 프레임 간격(stts)을 본다. 정본은 Lab4_fps_probe.html.
+   2026-10-14 실측: 아이폰 240 fps 슬로모를 카톡으로 받은 파일은 24 fps 고정, 앞뒤 1~2.5 s 만 정상 속도,
+   가운데가 4배 느렸다 (설정값으로 계산한 8배가 아님). 그래서 배수는 추정값으로 두고 스톱워치로 잴 수 있게 한다. */
+async function mp4Bytes(file, off, len){ return new DataView(await file.slice(off, off+len).arrayBuffer()); }
+function fcc(dv,o){ return String.fromCharCode(dv.getUint8(o),dv.getUint8(o+1),dv.getUint8(o+2),dv.getUint8(o+3)); }
+function u64(dv,o){ return dv.getUint32(o)*4294967296 + dv.getUint32(o+4); }
+async function readTiming(file){
+  let off=0, moov=null;
+  while(off+8<=file.size){
+    const dv=await mp4Bytes(file, off, 16);
+    let size=dv.getUint32(0), hdr=8; const type=fcc(dv,4);
+    if(size===1){ size=u64(dv,8); hdr=16; } else if(size===0) size=file.size-off;
+    if(size<8) break;
+    if(type==='moov'){ moov={off,size,hdr}; break; }
+    off+=size;
+  }
+  if(!moov || moov.size>60e6) return null;
+  const dv=await mp4Bytes(file, moov.off+moov.hdr, moov.size-moov.hdr);
+  const BOX=new Set(['moov','trak','mdia','minf','stbl','edts']);
+  const tracks=[]; let tr=null, mv=null;
+  (function walk(s0,e0,parent){
+    let o=s0;
+    while(o+8<=e0){
+      let size=dv.getUint32(o), hdr=8; const type=fcc(dv,o+4);
+      if(size===1){ size=u64(dv,o+8); hdr=16; } else if(size===0) size=e0-o;
+      if(size<8 || o+size>e0) break;
+      const s=o+hdr, ver=dv.getUint8(s);
+      if(type==='mvhd') mv = ver===1 ? {ts:dv.getUint32(s+20), dur:u64(dv,s+24)} : {ts:dv.getUint32(s+12), dur:dv.getUint32(s+16)};
+      else if(type==='trak'){ tr={stts:[], hdlr:'', ts:0}; tracks.push(tr); }
+      else if(tr && type==='mdhd') tr.ts = ver===1 ? dv.getUint32(s+20) : dv.getUint32(s+12);
+      else if(tr && type==='hdlr' && parent==='mdia') tr.hdlr=fcc(dv,s+8);
+      else if(tr && type==='stts'){ const n=dv.getUint32(s+4); for(let i=0,p=s+8;i<n && p+8<=o+size;i++,p+=8) tr.stts.push([dv.getUint32(p), dv.getUint32(p+4)]); }
+      if(BOX.has(type)) walk(s, o+size, type);
+      o+=size;
+    }
+  })(0, dv.byteLength, '');
+  const v=tracks.filter(t=>t.hdlr==='vide' && t.ts>0 && t.stts.length).sort((a,b)=>b.stts.length-a.stts.length)[0];
+  if(!v) return null;
+  let n=0, sum=0, dmin=Infinity, dmax=0;
+  v.stts.forEach(([c,d])=>{ n+=c; sum+=c*d; if(d>0){ dmin=Math.min(dmin,d); dmax=Math.max(dmax,d); } });
+  const sec=sum/v.ts;
+  /* 간격이 같은 프레임 묶음 = 속도 구간. 비슷한 간격(5% 안)은 합친다 */
+  const runs=[]; let t=0;
+  v.stts.forEach(([c,d])=>{ const ms=1000*d/v.ts, last=runs[runs.length-1];
+    if(last && Math.abs(last.ms-ms)<=0.05*last.ms){ last.n+=c; last.t1=t+c*d/v.ts; }
+    else runs.push({n:c, ms, t0:t, t1:t+c*d/v.ts}); t+=c*d/v.ts; });
+  return {n, sec, fps:n/sec, fpsLo:v.ts/dmax, fpsHi:v.ts/dmin, runs:runs.filter(r=>r.n>1), mvSec: mv&&mv.ts ? mv.dur/mv.ts : null};
+}
+
+const slVid=$('slVid');
+let slStep=1/30, slA=null, slB=null;
+function slSetF(F, why){
+  $('slF').value = (+F).toFixed(2); $('slFwhy').innerHTML = why||'';
+  slShowReal();
+}
+function slShowReal(){ const F=+$('slF').value;
+  $('slReal').textContent = F>0 ? (1/F).toFixed(3)+' s of real time' : '--'; }
+$('slF').oninput = ()=>{ slShowReal(); $('slFwhy').textContent='You typed this number.'; };
+
+async function slowCheck(file){
+  const url=URL.createObjectURL(file);
+  S.slowUrl=url; slA=slB=null; $('slTA').textContent=$('slTB').textContent='video --';
+  $('slSwA').value=$('slSwB').value=''; $('slCal').textContent='';
+  $('slFile').innerHTML='Reading the file&hellip;'; $('slVerdict').textContent='';
+  show('slow');
+  let T=null; try{ T=await readTiming(file); }catch(e){ T=null; }
+  const guess=S.slowSet/30;
+  if(!T){
+    $('slFile').innerHTML = kv('File', (file.size/1e6).toFixed(1)+' MB') + kv('Frame timing', 'Could not read');
+    $('slVerdict').innerHTML='The app could not read the frame timing inside this file.';
+    slSetF(guess, 'Guess from your setting: '+S.slowSet+' &divide; 30 = '+guess.toFixed(0)+'. Check it with a stopwatch.');
+  } else {
+    slStep=1/T.fps;
+    const uneven = T.fpsHi/T.fpsLo > 1.05;
+    $('slFile').innerHTML =
+      kv('Frames stored per second', T.fps.toFixed(1)+' fps') +
+      kv('Frames', T.n) +
+      kv('Video length', T.sec.toFixed(2)+' s') +
+      kv('Frame spacing', uneven ? 'changes: '+T.fpsLo.toFixed(1)+' to '+T.fpsHi.toFixed(1)+' fps' : 'even ('+(1000/T.fps).toFixed(1)+' ms)') +
+      (uneven ? T.runs.slice(0,8).map(r=>kv(r.t0.toFixed(2)+' to '+r.t1.toFixed(2)+' s', r.n+' frames, '+r.ms.toFixed(2)+' ms apart')).join('') : '');
+    if(T.fps>=90){
+      $('slVerdict').innerHTML='<b>The phone kept the fast frames with their real times.</b> One second of this video is one second of real time, so no stretch is needed.';
+      slSetF(1, 'The file stores '+T.fps.toFixed(0)+' frames per second, so the times are already real.');
+    } else {
+      $('slVerdict').innerHTML='<b>Time is stretched in the slow part.</b> The file plays only '+T.fps.toFixed(0)+' frames per second, '+
+        'but the phone filmed '+S.slowSet+' per second. The middle of the video plays slower than real life, '+
+        'and the first and last 1 to 3 seconds play at normal speed.';
+      slSetF(guess, 'Guess from your setting: '+S.slowSet+' &divide; 30 = '+guess.toFixed(0)+
+        '. Our own iPhone 240 fps test videos were stretched only 4&times;, so check this with a stopwatch.');
+    }
+  }
+  slVid.src=url; slVid.load();
+  slVid.onloadedmetadata=()=>{ slSeekTo(Math.min(0.05, slVid.duration*0.02)); };
+}
+function slSeekTo(t){
+  const d=slVid.duration||0; if(!d) return;
+  t=Math.max(0, Math.min(d-0.001, t)); slVid.currentTime=t;
+  $('slSeek').value=Math.round(1000*t/d); $('slT').textContent='video '+t.toFixed(3)+' s';
+}
+$('slSeek').oninput = e=>slSeekTo((+e.target.value/1000)*(slVid.duration||0));
+$('slPrev').onclick = ()=>slSeekTo(slVid.currentTime-slStep);
+$('slNext').onclick = ()=>slSeekTo(slVid.currentTime+slStep);
+/* 스톱워치 읽은 값: '3.25', '0:03.25', '1:02:03.25' 모두 받는다 */
+function swSec(s){ s=(s||'').trim().replace(',', '.'); if(!s) return NaN;
+  return s.split(':').reduce((a,p)=>a*60+parseFloat(p), 0); }
+function slCalc(){
+  const a=swSec($('slSwA').value), b=swSec($('slSwB').value);
+  if(slA==null||slB==null||!isFinite(a)||!isFinite(b)){ $('slCal').textContent='Set A and B, and type both stopwatch readings.'; return; }
+  const dv=Math.abs(slB-slA), dr=Math.abs(b-a);
+  if(dv<0.2||dr<=0){ $('slCal').textContent='Pick two moments further apart.'; return; }
+  const F=dv/dr;
+  $('slCal').innerHTML='Video moved <b>'+dv.toFixed(3)+' s</b>, the stopwatch moved <b>'+dr.toFixed(3)+' s</b>. '+
+    'Stretch = '+dv.toFixed(3)+' &divide; '+dr.toFixed(3)+' = <b>'+F.toFixed(2)+'&times;</b>';
+  slSetF(F, 'Measured with your stopwatch (A to B).');
+}
+$('slMarkA').onclick=()=>{ slA=slVid.currentTime; $('slTA').textContent='video '+slA.toFixed(3)+' s'; slCalc(); };
+$('slMarkB').onclick=()=>{ slB=slVid.currentTime; $('slTB').textContent='video '+slB.toFixed(3)+' s'; slCalc(); };
+$('slSwA').oninput=slCalc; $('slSwB').oninput=slCalc;
+$('slGo').onclick=()=>{
+  const F=+$('slF').value; if(!(F>=1&&F<=64)){ toast('Type a stretch between 1 and 64.','warn'); return; }
+  S.slowF=F; slVid.pause(); loadVideo(S.slowUrl);
+};
 
 const probe = document.createElement('video');
 probe.playsInline=true; probe.muted=true; probe.preload='auto';
@@ -1161,7 +1341,8 @@ function speeds(){
     for(let s=0;s+2<p.length;s++){
       const a=p[s], b=p[s+2], dt=b.t-a.t; if(dt<=0) continue;
       const A=toW(a), B=toW(b); if(!A||!B) continue;
-      out.push({k, t:(a.t+b.t)/2, v:Math.hypot(B.x-A.x,B.y-A.y)/dt});
+      /* 슬로모: 영상 시간 dt 는 실제 시간 dt/slowF 이다 -> 속도에 slowF 를 곱한다 */
+      out.push({k, t:(a.t+b.t)/2, v:(S.slowF||1)*Math.hypot(B.x-A.x,B.y-A.y)/dt});
     }
   });
   return out;
@@ -1365,7 +1546,8 @@ function fillResult(){
     kv('Ducks tracked', S.tracks.length) +
     kv('Median speed', (vmed>0? vmed.toFixed(1):'--')+' cm/s <button class="ibtn" data-info="speed">i</button>') +
     kv('Slow to fast (10th to 90th pct.)', sp.length? pct(sp.map(s=>s.v),10).toFixed(1)+' to '+pct(sp.map(s=>s.v),90).toFixed(1)+' cm/s':'--') +
-    kv('Channel width used', S.widthCm.toFixed(1)+' cm');
+    kv('Channel width used', S.widthCm.toFixed(1)+' cm') +
+    ((S.slowF||1)!==1 ? kv('Slow-motion stretch', '&times;'+S.slowF.toFixed(2)+' (speeds already corrected)') : '');
   $('rsSoWhat').innerHTML = '<b>So what?</b> ' + c.watch + (S.obs ? OBS_WATCH : '');
   $('rsLegend').innerHTML =
     (S.concept==='streak' ? '<span><i style="background:#e02020"></i>Streakline at this instant</span>' : '') +
