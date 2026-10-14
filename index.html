@@ -215,7 +215,7 @@ window.addEventListener('load',function(){ setTimeout(function(){
 
   <button class="btn" id="btnStart">Start</button>
   <button class="btn ghost sm" id="btnDemo">Try a demo video (no recording needed)</button>
-  <p class="foot">Lab 4 pilot &middot; v1.023</p>
+  <p class="foot">Lab 4 pilot &middot; v1.024</p>
 </section>
 
 <!-- ============ 2. 개념 고르기 ============ -->
@@ -255,19 +255,15 @@ window.addEventListener('load',function(){ setTimeout(function(){
     <div class="kv"><span class="k">Phone</span><span class="v">On a tripod, pointing straight down</span></div>
     <div class="kv"><span class="k">Frame</span><span class="v">Both walls fully visible</span></div>
   </div>
-  <h3>Before you record, check both</h3>
+  <h3 id="shChkTtl">Before you record, check both</h3>
   <div class="card tight">
     <label class="chk"><input type="checkbox" id="shMount"><span>The phone is on the tripod, <b>pointing straight down</b> at the water, and does not move</span></label>
     <label class="chk"><input type="checkbox" id="shFrame"><span>Both walls are on screen, and no ducks are in the water yet</span></label>
+    <label class="chk" id="shSlowRow" style="display:none"><input type="checkbox" id="shSlowChk"><span>The phone's <b>Camera app</b> is in <b>Slo-mo at 240 fps</b>
+      (iPhone: Settings &rarr; Camera &rarr; Record Slo-mo &rarr; 240 fps). I will <b>start recording, wait 3 seconds, then put the ducks in</b>,
+      and keep recording 3 seconds after the last duck leaves.</span></label>
   </div>
-  <div class="card tight" id="shSlow" style="display:none">
-    <h3 style="margin-top:0">Record in slow motion, 240 fps</h3>
-    <p class="sub">Behind the plate the ducks are too fast for normal video. Record with the phone's own <b>Camera app</b>
-      in <b>Slo-mo at 240 fps</b> (iPhone: Settings &rarr; Camera &rarr; Record Slo-mo &rarr; 240 fps).
-      The phone keeps the start and the end at normal speed, so <b>start recording, wait 3 seconds, then put the ducks in</b>.
-      Keep recording 3 seconds after the last duck leaves. Then tap <b>Choose a video you already recorded</b>.</p>
-  </div>
-  <p class="sub">Start recording first, then walk upstream behind the phone and put the ducks in.</p>
+  <p class="sub" id="shHint">Start recording first, then walk upstream behind the phone and put the ducks in.</p>
   <label class="btn off" id="lbCam" for="fileCam">Record video</label>
   <input id="fileCam" type="file" accept="video/*" capture="environment" hidden>
   <label class="btn ghost off" id="lbLib" for="fileLib">Choose a video you already recorded</label>
@@ -276,7 +272,7 @@ window.addEventListener('load',function(){ setTimeout(function(){
   <button class="btn ghost sm" data-go="brief">Back to instructions</button>
 </section>
 
-<!-- ============ 4b. 슬로모 확인 (v1.021, 장애물 있음 Streamline 칸만) ============ -->
+<!-- ============ 4b. 슬로모 확인 (v1.021, v1.024 부터 장애물 있음 세 칸) ============ -->
 <section class="screen" id="s-slow">
   <h2>How your phone saved this video</h2>
   <p class="sub">Slow motion stretches time. The app has to know by how much, or every speed comes out too slow.</p>
@@ -679,9 +675,17 @@ function fillBrief(){
   $('brSteps').innerHTML = [MOUNT_STEP].concat(S.obs ? [OBS_STEP].concat(c.steps) : c.steps).map(x=>`<li>${x}</li>`).join('');
   $('shTtl').textContent = 'Record ' + c.name + (S.obs ? ' (with obstruction)' : '');
   /* v1.021: 장애물 있음 Streamline 칸은 슬로모로 찍는다. 웹 카메라는 슬로모가 안 되니 녹화 버튼을 숨긴다 */
-  $('shSlow').style.display = isSlowCell() ? 'block' : 'none';
+  /* v1.024: 장애물 있음 세 칸은 카메라 앱 슬로모(240 fps)로 찍어 올린다. 체크 3개, 업로드 버튼만 */
+  const sl=isSlowCell();
+  $('shSlowRow').style.display = sl ? '' : 'none';
+  $('shChkTtl').textContent = sl ? 'Before you record, check all three' : 'Before you record, check both';
+  $('shHint').textContent = sl ? 'Record in the Camera app, then come back here and upload the video.'
+                               : 'Start recording first, then walk upstream behind the phone and put the ducks in.';
+  $('lbCam').style.display = sl ? 'none' : '';
+  $('lbLib').textContent = sl ? 'Upload your video' : 'Choose a video you already recorded';
+  shGate();
 }
-function isSlowCell(){ return S.obs && S.concept==='stream'; }
+function isSlowCell(){ return !!S.obs; }
 
 /* ---------------------------------------------------------------- 영상 읽기 */
 function b64ToBlob(b64, type){
@@ -702,10 +706,10 @@ $('btnDemo').onclick = ()=>{ S.demoMode=true; show('pick');
   toast('Demo mode: tap any cell to open a sample video recorded on this flume.'); };
 $('btnDemo2').onclick = loadDemo;
 function shGate(){
-  const ok=$('shMount').checked && $('shFrame').checked;
+  const ok=$('shMount').checked && $('shFrame').checked && (!isSlowCell() || $('shSlowChk').checked);
   $('lbCam').classList.toggle('off',!ok); $('lbLib').classList.toggle('off',!ok);
 }
-$('shMount').onchange=shGate; $('shFrame').onchange=shGate;
+$('shMount').onchange=shGate; $('shFrame').onchange=shGate; $('shSlowChk').onchange=shGate;
 function pickedFile(e){
   const f=e.target.files[0]; e.target.value=''; if(!f) return; S.recDur=0;
   if(isSlowCell()) slowCheck(f);
